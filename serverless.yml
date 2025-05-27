@@ -1,0 +1,240 @@
+service: medical-appointment-scheduling-api
+stage: ${opt:stage, 'dev'}
+
+custom:
+  region: us-east-1
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  stage: ${opt:stage, 'dev'}
+  region: ${self:custom.region}
+  memorySize: 256 
+  timeout: 30
+  apiGateway:
+    minimumCompressionSize: 512  
+  deploymentBucket:
+    name: medical-appointment-scheduling-api.deployment.${opt:stage, 'dev'}.${self:custom.region}
+  environment:
+    AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+    
+functions:
+  appointment:
+    handler: src/adapters/inbound/HandlerAppointment.handler
+    environment:
+      TABLE_NAME: !Ref SchedulingTable
+      SNS_TOPIC_ARN: !Ref AppointmentsSns
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+        Resource: !GetAtt SchedulingTable.Arn
+      - Effect: Allow
+        Action:
+          - sns:Publish
+        Resource: !Ref AppointmentsSns
+      - Effect: Allow
+        Action:
+          - sqs:ReceiveMessage
+          - sqs:DeleteMessage
+          - sqs:GetQueueAttributes
+        Resource: !GetAtt ConfirmationQueue.Arn
+    events:
+      - http:
+          path: appointment
+          method: post
+          cors: true
+      - http:
+          path: appointments/{insuredId}
+          method: get
+          cors: true
+      - sqs:
+          arn: !GetAtt ConfirmationQueue.Arn
+
+  appointment_pe:
+    handler: src/adapters/inbound/HandlerAppointmentPE.handler
+    environment:
+      PERU_SQS_URL: !Ref PeruQueue
+      DB_HOST: ${env:DB_HOST}
+      DB_PORT: ${env:DB_PORT}
+      DB_USER: ${env:DB_USER}
+      DB_PASSWORD: ${env:DB_PASSWORD}
+      DB_NAME: ${env:DB_NAME}
+      EVENT_BUS_NAME: scheduling-bus-${opt:stage, 'dev'}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - sqs:ReceiveMessage
+          - sqs:DeleteMessage
+          - sqs:GetQueueAttributes
+        Resource: !GetAtt PeruQueue.Arn
+      - Effect: Allow
+        Action:
+          - rds:*
+        Resource: arn:aws:rds:us-east-1:874108371061:db:databasemysql
+      - Effect: Allow
+        Action:
+          - events:PutEvents
+        Resource: !GetAtt ConfirmationEventBus.Arn
+    events:
+    - sqs:
+        arn: !GetAtt PeruQueue.Arn
+
+  appointment_cl:
+    handler: src/adapters/inbound/HandlerAppointmentCL.handler
+    environment:
+      CHILE_SQS_URL: !Ref ChileQueue
+      DB_HOST: ${env:DB_HOST}
+      DB_PORT: ${env:DB_PORT}
+      DB_USER: ${env:DB_USER}
+      DB_PASSWORD: ${env:DB_PASSWORD}
+      DB_NAME: ${env:DB_NAME}
+      EVENT_BUS_NAME: scheduling-bus-${opt:stage, 'dev'}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - sqs:ReceiveMessage
+          - sqs:DeleteMessage
+          - sqs:GetQueueAttributes
+        Resource: !GetAtt ChileQueue.Arn
+      - Effect: Allow
+        Action:
+          - rds:*
+        Resource: arn:aws:rds:us-east-1:874108371061:db:databasemysql
+      - Effect: Allow
+        Action:
+          - events:PutEvents
+        Resource: !GetAtt ConfirmationEventBus.Arn
+    events:
+    - sqs:
+        arn: !GetAtt ChileQueue.Arn
+
+resources:
+  Resources:
+    SchedulingTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: schedule-${opt:stage, 'dev'}
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+
+    AppointmentsSns:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: appointments-topic-${opt:stage, 'dev'}
+    
+    PeruSNSSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: sqs
+        Endpoint: !GetAtt PeruQueue.Arn
+        TopicArn: !Ref AppointmentsSns
+
+    ChileSNSSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        Protocol: sqs
+        Endpoint: !GetAtt ChileQueue.Arn
+        TopicArn: !Ref AppointmentsSns
+
+    PeruQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: peru-sqs-${opt:stage, 'dev'}
+
+    PeruQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref PeruQueue
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal: "*"
+              Action: "SQS:SendMessage"
+              Resource: !GetAtt PeruQueue.Arn
+              Condition:
+                ArnEquals:
+                  "aws:SourceArn": !Ref AppointmentsSns
+
+    ChileQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+          QueueName: chile-sqs-${opt:stage, 'dev'}
+  
+    ChileQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref ChileQueue
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal: "*"
+              Action: "SQS:SendMessage"
+              Resource: !GetAtt ChileQueue.Arn
+              Condition:
+                ArnEquals:
+                  "aws:SourceArn": !Ref AppointmentsSns
+
+    ConfirmationQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: confirmation-queue-${opt:stage, 'dev'}
+
+    ConfirmationQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref ConfirmationQueue
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: events.amazonaws.com
+              Action: "sqs:SendMessage"
+              Resource: !GetAtt ConfirmationQueue.Arn
+
+    ConfirmationEventBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: scheduling-bus-${opt:stage, 'dev'}
+
+    ConfirmationEventBridgeRule:
+      Type: AWS::Events::Rule
+      Properties:
+        EventBusName: scheduling-bus-${opt:stage, 'dev'}
+        EventPattern:
+          source:
+            - 'lambda'
+          detail-type:
+            - "AppointmentCompleted"
+        Targets:
+          - Arn: !GetAtt ConfirmationQueue.Arn
+            Id: "ConfirmationQueue"
+            DeadLetterConfig:
+              Arn: !GetAtt EventBridgeDLQ.Arn
+
+    EventBridgeDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: eventbridge-dlq-${opt:stage, 'dev'}
+
+plugins:
+  - serverless-plugin-typescript
+  - serverless-iam-roles-per-function
+  - serverless-dotenv-plugin

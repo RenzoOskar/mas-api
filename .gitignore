@@ -1,0 +1,11 @@
+# Node.js dependencies
+node_modules/
+
+# Serverless Framework
+.serverless/
+
+.webpack
+
+.build
+
+.serverless
