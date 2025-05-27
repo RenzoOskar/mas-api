@@ -1,0 +1,113 @@
+openapi: 3.0.4
+info:
+  title: API de Agendamiento Médico
+  description: API para agendar y consultar citas médicas en Perú y Chile.
+  version: 1.0.0
+
+servers:
+  - url: https://931km0zcg4.execute-api.us-east-1.amazonaws.com/dev
+    description: API Gateway Dev Stage
+
+paths:
+  /appointment:
+    post:
+      summary: Crear una cita médica
+      operationId: createAppointment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAppointmentRequest'
+      responses:
+        200:
+          description: Cita creada exitosamente
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  msg:
+                    type: string
+                    example: El agendamiento esta en proceso
+        400:
+          description: Request inválido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /appointments/{insuredId}:
+    get:
+      summary: Consultar citas por asegurado
+      operationId: getAppointments
+      parameters:
+        - name: insuredId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: Lista de citas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  msg:
+                    type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Appointment'
+        404:
+          description: No se encontraron citas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    CreateAppointmentRequest:
+      type: object
+      required:
+        - insuredId
+        - scheduleId
+        - countryISO
+      properties:
+        insuredId:
+          type: string
+          example: "1064"
+        scheduleId:
+          type: integer
+          example: 211
+        countryISO:
+          type: string
+          enum: [PE, CL]
+          example: CL
+
+    Appointment:
+      type: object
+      properties:
+        scheduleId:
+          type: integer
+          example: 211
+        insuredId:
+          type: string
+          example: "1064"
+        countryISO:
+          type: string
+          example: CL
+        status:
+          type: string
+          example: COMPLETED
+
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: Request inválido
